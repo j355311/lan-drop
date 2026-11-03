@@ -11,7 +11,7 @@ const { pipeline } = require('node:stream/promises')
 const packageInfo = require('./package.json')
 
 const APP_PROTOCOL = 'lan-drop'
-const UPDATE_ASSET_NAME = 'LAN Drop - Windows Portable.zip'
+const UPDATE_ASSET_NAME = 'LAN.Drop.-.Windows.Portable.zip'
 const DEFAULT_TRANSFER_PORT = 48760
 const DISCOVERY_PORT = 48761
 const DISCOVERY_INTERVAL_MS = 3000

@@ -14,10 +14,10 @@ The computers must both be awake with LAN Drop open. If automatic discovery does
 
 ## Download and update
 
-Download the [latest portable ZIP](https://github.com/j355311/lan-drop/releases/latest/download/LAN%20Drop%20-%20Windows%20Portable.zip), extract it, and run `LAN Drop.exe`. The app's **Download latest** button opens the same latest release download. To replace an older copy, close LAN Drop first, then extract the new ZIP and replace the executable.
+Download the [latest portable ZIP](https://github.com/j355311/lan-drop/releases/latest/download/LAN.Drop.-.Windows.Portable.zip), extract it, and run `LAN Drop.exe`. The app's **Download latest** button opens the same latest release download. To replace an older copy, close LAN Drop first, then extract the new ZIP and replace the executable.
 
-## Build from source
+## Run and package
 
-Run `npm install`, then `npm start` for development. Run `npm run dist` to create a portable Windows executable in `dist-final`.
+From this folder, run `npm install`, then `npm start` for development. Run `npm run dist` to create a portable Windows executable in `dist`.
 
 The first version is for the same local network. Transfers use the local network and are not encrypted in transit; only run it on a network you trust.
