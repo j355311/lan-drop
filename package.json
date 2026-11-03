@@ -1,0 +1,39 @@
+{
+  "name": "lan-file-drop",
+  "productName": "LAN Drop",
+  "version": "1.0.1",
+  "description": "Private peer-to-peer file transfers over your local network.",
+  "updateRepository": "j355311/lan-drop",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "local.landrop",
+    "productName": "LAN Drop",
+    "asar": true,
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist-final"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "LAN Drop.${ext}"
+    }
+  }
+}
