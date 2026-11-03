@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>LAN Drop</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none"><path d="M16 4v16m0 0 6-6m-6 6-6-6M6 20v6h20v-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div>
+          <div class="brand-name">LAN Drop</div>
+          <div class="brand-caption">Your files, right across the room.</div>
+        </div>
+      </div>
+      <div id="networkBadge" class="network-badge network-badge-offline">
+        <span class="status-dot"></span>
+        <span id="networkLabel">Starting local connection</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="intro-row">
+        <div>
+          <p class="eyebrow">PRIVATE FILE TRANSFER</p>
+          <h1>Move files between your computers.</h1>
+          <p class="intro-copy">Both computers need LAN Drop open and connected to the same local network.</p>
+        </div>
+        <div class="local-device-card">
+          <div class="local-device-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="3.5" y="4" width="17" height="12" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="M8 20h8m-4-4v4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </div>
+          <div class="local-device-details">
+            <span class="card-label">THIS COMPUTER</span>
+            <strong id="deviceNameDisplay">Finding this computer…</strong>
+            <span id="localAddressDisplay" class="muted-small">Looking for a local network address</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="work-grid">
+        <article class="panel files-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">STEP 1</p>
+              <h2>Choose files</h2>
+            </div>
+            <span id="fileCount" class="count-pill">0 files</span>
+          </div>
+          <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="Drop files here or choose files">
+            <div class="drop-icon" aria-hidden="true">
+              <svg viewBox="0 0 40 40" fill="none"><path d="M20 7v19m0 0 7-7m-7 7-7-7M9 26v7h22v-7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <strong>Drop files here</strong>
+            <span>or choose them from your computer</span>
+            <button id="chooseFilesButton" class="button button-secondary" type="button">Choose files</button>
+          </div>
+          <div id="fileQueue" class="file-queue" aria-live="polite"></div>
+          <button id="clearFilesButton" class="text-button clear-button" type="button" hidden>Clear list</button>
+        </article>
+
+        <article class="panel devices-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">STEP 2</p>
+              <h2>Send to a computer</h2>
+            </div>
+            <span id="peerCount" class="count-pill">0 nearby</span>
+          </div>
+          <div id="peerList" class="peer-list" aria-live="polite"></div>
+          <div id="emptyPeers" class="empty-peers">
+            <div class="empty-peers-icon" aria-hidden="true">
+              <svg viewBox="0 0 40 40" fill="none"><rect x="6" y="8" width="12" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="22" y="22" width="12" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M18 13h5a4 4 0 0 1 4 4v5M22 27h-5a4 4 0 0 1-4-4v-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </div>
+            <strong>No other computer yet</strong>
+            <span>Open LAN Drop on the other computer and keep it on this network.</span>
+          </div>
+          <div class="manual-connect">
+            <label for="peerAddress">Or connect using the other computer’s address</label>
+            <div class="manual-connect-row">
+              <input id="peerAddress" type="text" inputmode="decimal" placeholder="192.168.1.25:48760" autocomplete="off">
+              <button id="connectButton" class="button button-outline" type="button">Connect</button>
+            </div>
+            <div id="connectError" class="inline-error" role="status" hidden></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="send-bar">
+        <div id="sendSummary" class="send-summary">Choose files and a computer to continue.</div>
+        <button id="sendButton" class="button button-primary" type="button" disabled>
+          <span>Send files</span>
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3.5 10h12m0 0-5-5m5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </section>
+
+      <section class="activity-section">
+        <div class="activity-heading">
+          <div>
+            <p class="eyebrow">RECENT ACTIVITY</p>
+            <h2>Transfers</h2>
+          </div>
+          <span class="muted-small">Incoming files are saved only after you accept them.</span>
+        </div>
+        <div id="transferList" class="transfer-list">
+          <div id="emptyActivity" class="empty-activity">Your transfers will appear here.</div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="settings-strip">
+      <div class="receive-location">
+        <div class="folder-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M3.5 7.5h7l2 2H20a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 .5-1Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M3.5 11h17" stroke="currentColor" stroke-width="1.7"/></svg>
+        </div>
+        <div class="receive-copy">
+          <span class="card-label">RECEIVED FILES GO TO</span>
+          <span id="receiveDirectoryDisplay" class="receive-directory">Loading folder…</span>
+        </div>
+      </div>
+      <div class="app-update">
+        <div class="app-update-copy">
+          <span class="card-label">APP VERSION</span>
+          <span id="appVersionDisplay" class="app-update-version">Loading…</span>
+        </div>
+        <button id="downloadLatestButton" class="button button-outline" type="button" disabled>Download latest</button>
+      </div>
+      <div class="settings-actions">
+        <button id="openFolderButton" class="text-button" type="button">Open folder</button>
+        <button id="changeFolderButton" class="text-button" type="button">Change</button>
+      </div>
+    </footer>
+  </div>
+
+  <section id="incomingRequests" class="incoming-stack" aria-live="assertive"></section>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>
