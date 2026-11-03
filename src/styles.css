@@ -258,3 +258,24 @@ button:focus-visible, input:focus-visible, .drop-zone:focus-visible { outline-co
 ::-webkit-scrollbar-track { background: #0b111c; }
 ::-webkit-scrollbar-thumb { border: 2px solid #0b111c; border-radius: 99px; background: #35445a; }
 ::-webkit-scrollbar-thumb:hover { background: #4b5f7a; }
+
+.notes-panel { min-height: 0; margin-top: 14px; }
+.notes-panel textarea { display: block; width: 100%; min-height: 104px; resize: vertical; padding: 12px; border: 1px solid #34445b; border-radius: 10px; color: #e0e8f3; background: #101927; font: inherit; font-size: 11px; line-height: 1.55; }
+.notes-panel textarea::placeholder { color: #718198; }
+.notes-panel textarea:focus-visible { outline: 3px solid rgba(110, 156, 255, .55); outline-offset: 2px; }
+.note-composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.note-action-buttons { display: flex; flex: 0 0 auto; gap: 7px; }
+.note-action-buttons .button, .note-copy-button { padding: 8px 11px; font-size: 10px; }
+.note-history-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 18px 0 8px; padding-top: 12px; border-top: 1px solid #29364a; }
+.note-list { display: grid; max-height: 330px; gap: 7px; overflow: auto; }
+.note-row { padding: 10px 11px; border: 1px solid #2b394d; border-radius: 10px; background: #111a28; }
+.note-row-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.note-row-details { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.note-row-details strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.note-row-details span { color: #99a8bb; font-size: 9px; }
+.note-message { max-height: 160px; margin-top: 8px; overflow: auto; color: #d7e0ed; font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.incoming-note-message { max-height: 180px; margin: 12px 0; padding: 10px; overflow: auto; border: 1px solid #2c3c52; border-radius: 9px; color: #dce5f1; background: #101927; font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+@media (max-width: 920px) {
+  .note-composer-toolbar { align-items: flex-start; flex-direction: column; }
+}

@@ -58,7 +58,7 @@
               <svg viewBox="0 0 40 40" fill="none"><path d="M20 7v19m0 0 7-7m-7 7-7-7M9 26v7h22v-7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </div>
             <strong>Drop files here</strong>
-            <span>or choose them from your computer</span>
+            <span>or choose files · paste copied files with Ctrl+V</span>
             <button id="chooseFilesButton" class="button button-secondary" type="button">Choose files</button>
           </div>
           <div id="fileQueue" class="file-queue" aria-live="polite"></div>
@@ -100,6 +100,32 @@
         </button>
       </section>
 
+      <section class="notes-panel panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">QUICK MESSAGES</p>
+            <h2>Send a note</h2>
+          </div>
+          <span id="noteCount" class="count-pill">0 saved</span>
+        </div>
+        <textarea id="noteComposer" rows="4" maxlength="65536" placeholder="Write a note to send to the selected computer…" aria-label="Write a note"></textarea>
+        <div class="note-composer-toolbar">
+          <span id="noteRecipient" class="muted-small">Select a computer to send a note.</span>
+          <div class="note-action-buttons">
+            <button id="pasteNoteButton" class="button button-outline" type="button">Paste</button>
+            <button id="copyNoteButton" class="button button-outline" type="button">Copy</button>
+            <button id="sendNoteButton" class="button button-primary" type="button" disabled>Send note</button>
+          </div>
+        </div>
+        <div class="note-history-heading">
+          <span class="card-label">NOTES SAVED ON THIS COMPUTER</span>
+          <span class="muted-small">Accepted notes are saved here too.</span>
+        </div>
+        <div id="noteList" class="note-list" aria-live="polite">
+          <div class="empty-activity">Your saved notes will appear here.</div>
+        </div>
+      </section>
+
       <section class="activity-section">
         <div class="activity-heading">
           <div>
@@ -126,10 +152,10 @@
       </div>
       <div class="app-update">
         <div class="app-update-copy">
-          <span class="card-label">APP VERSION</span>
+          <span class="card-label">APP VERSION AND UPDATES</span>
           <span id="appVersionDisplay" class="app-update-version">Loading…</span>
         </div>
-        <button id="downloadLatestButton" class="button button-outline" type="button" disabled>Download latest</button>
+        <button id="updateButton" class="button button-outline" type="button" disabled>Check for updates</button>
       </div>
       <div class="settings-actions">
         <button id="openFolderButton" class="text-button" type="button">Open folder</button>

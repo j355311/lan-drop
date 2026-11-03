@@ -17,22 +17,34 @@ const elements = {
   connectError: document.getElementById('connectError'),
   sendButton: document.getElementById('sendButton'),
   sendSummary: document.getElementById('sendSummary'),
+  noteComposer: document.getElementById('noteComposer'),
+  noteRecipient: document.getElementById('noteRecipient'),
+  noteCount: document.getElementById('noteCount'),
+  noteList: document.getElementById('noteList'),
+  sendNoteButton: document.getElementById('sendNoteButton'),
+  copyNoteButton: document.getElementById('copyNoteButton'),
+  pasteNoteButton: document.getElementById('pasteNoteButton'),
   transferList: document.getElementById('transferList'),
   emptyActivity: document.getElementById('emptyActivity'),
   incomingRequests: document.getElementById('incomingRequests'),
   openFolderButton: document.getElementById('openFolderButton'),
   changeFolderButton: document.getElementById('changeFolderButton'),
   appVersionDisplay: document.getElementById('appVersionDisplay'),
-  downloadLatestButton: document.getElementById('downloadLatestButton'),
+  updateButton: document.getElementById('updateButton'),
   toast: document.getElementById('toast')
 }
 
 const files = new Map()
 const transfers = new Map()
 const incomingRequests = new Map()
+let notes = []
 let appState = null
 let selectedPeerId = null
 let sending = false
+let sendingNote = false
+let appVersion = ''
+let updatesSupported = false
+let updateState = { status: 'idle' }
 let toastTimer = null
 
 function formatBytes(bytes) {
@@ -75,6 +87,7 @@ function renderNetwork() {
   elements.receiveDirectoryDisplay.title = appState.receiveDirectory
   renderPeers()
   renderSendSummary()
+  renderNoteComposer()
 }
 
 function createPeerIcon() {
@@ -116,6 +129,7 @@ function renderPeers() {
       selectedPeerId = peer.deviceId
       renderPeers()
       renderSendSummary()
+      renderNoteComposer()
     })
     elements.peerList.append(button)
   }
@@ -173,6 +187,116 @@ function renderSendSummary() {
     elements.sendSummary.textContent = 'Choose files and a computer to continue.'
   }
   elements.sendButton.disabled = sending || !peer || !fileCount
+}
+
+function renderNoteComposer() {
+  const peer = (appState?.peers || []).find((candidate) => candidate.deviceId === selectedPeerId)
+  const hasNote = Boolean(elements.noteComposer.value.trim())
+  if (sendingNote) {
+    elements.noteRecipient.textContent = 'Waiting for the other computer to accept the note…'
+  } else if (peer) {
+    elements.noteRecipient.textContent = `Send to ${peer.deviceName}. Accepted notes are saved on both computers.`
+  } else {
+    elements.noteRecipient.textContent = 'Select a computer above to send a note.'
+  }
+  elements.sendNoteButton.disabled = sendingNote || !peer || !hasNote
+  elements.noteComposer.disabled = sendingNote
+  elements.copyNoteButton.disabled = !hasNote
+}
+
+function formatNoteTime(timestamp) {
+  const date = new Date(timestamp)
+  if (!Number.isFinite(date.getTime())) return 'Saved'
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+function noteStatusLabel(note) {
+  if (note.status === 'waiting') return 'Waiting for acceptance'
+  if (note.status === 'sent') return 'Sent'
+  if (note.status === 'received') return 'Received'
+  if (note.status === 'declined') return 'Declined'
+  if (note.status === 'failed') return 'Not sent'
+  return 'Saved'
+}
+
+function renderNotes() {
+  elements.noteCount.textContent = `${notes.length} ${notes.length === 1 ? 'saved note' : 'saved notes'}`
+  elements.noteList.replaceChildren()
+  if (!notes.length) {
+    const empty = document.createElement('div')
+    empty.className = 'empty-activity'
+    empty.textContent = 'Your saved notes will appear here.'
+    elements.noteList.append(empty)
+    return
+  }
+
+  for (const note of notes) {
+    const row = document.createElement('article')
+    row.className = 'note-row'
+    const heading = document.createElement('div')
+    heading.className = 'note-row-heading'
+    const details = document.createElement('div')
+    details.className = 'note-row-details'
+    const direction = document.createElement('strong')
+    direction.textContent = `${note.direction === 'incoming' ? 'From' : 'To'} ${note.peerName || 'computer'}`
+    const meta = document.createElement('span')
+    meta.textContent = `${formatNoteTime(note.createdAt)} · ${noteStatusLabel(note)}`
+    details.append(direction, meta)
+    const copy = document.createElement('button')
+    copy.type = 'button'
+    copy.className = 'button button-outline note-copy-button'
+    copy.textContent = 'Copy'
+    copy.setAttribute('aria-label', 'Copy saved note')
+    copy.addEventListener('click', async () => {
+      try {
+        await window.lanDrop.writeClipboardText(note.text)
+        showToast('Note copied to the clipboard.')
+      } catch (error) {
+        showToast(error.message, true)
+      }
+    })
+    heading.append(details, copy)
+    const message = document.createElement('div')
+    message.className = 'note-message'
+    message.textContent = note.text
+    row.append(heading, message)
+    elements.noteList.append(row)
+  }
+}
+
+function renderUpdateStatus(status) {
+  updateState = status || { status: 'idle' }
+  let label = appVersion ? `Version ${appVersion}` : 'Loading version…'
+  let buttonText = 'Check for updates'
+  let disabled = !updatesSupported
+
+  if (updateState.status === 'unsupported') {
+    label = 'Updates require the installed app'
+    buttonText = 'Check for updates'
+  } else if (updateState.status === 'checking') {
+    label = `Version ${appVersion} · checking…`
+    buttonText = 'Checking…'
+    disabled = true
+  } else if (updateState.status === 'downloading') {
+    label = `Downloading update · ${Math.max(0, Math.min(100, updateState.percent || 0))}%`
+    buttonText = 'Downloading…'
+    disabled = true
+  } else if (updateState.status === 'downloaded') {
+    label = `Version ${updateState.version} is ready`
+    buttonText = 'Restart and install'
+    disabled = !updatesSupported
+  } else if (updateState.status === 'current') {
+    label = `Version ${appVersion} · up to date`
+    buttonText = 'Check again'
+  } else if (updateState.status === 'error') {
+    label = 'Update check failed'
+    buttonText = 'Try again'
+  }
+
+  elements.appVersionDisplay.textContent = label
+  elements.appVersionDisplay.title = updateState.message || label
+  elements.updateButton.textContent = buttonText
+  elements.updateButton.disabled = disabled
 }
 
 function transferStatusLabel(update) {
@@ -280,7 +404,56 @@ async function sendQueuedFiles() {
   }
 }
 
+async function sendComposedNote() {
+  if (sendingNote || !selectedPeerId || !elements.noteComposer.value.trim()) return
+  sendingNote = true
+  renderNoteComposer()
+  try {
+    await window.lanDrop.sendNote(selectedPeerId, elements.noteComposer.value)
+    elements.noteComposer.value = ''
+    showToast('Note sent and saved.')
+  } catch (error) {
+    showToast(error.message, true)
+  } finally {
+    sendingNote = false
+    renderNoteComposer()
+  }
+}
+
+async function copyComposedNote() {
+  const text = elements.noteComposer.value
+  if (!text) return
+  const start = elements.noteComposer.selectionStart
+  const end = elements.noteComposer.selectionEnd
+  const selectedText = start !== end ? text.slice(start, end) : text
+  try {
+    await window.lanDrop.writeClipboardText(selectedText)
+    showToast(start !== end ? 'Selection copied to the clipboard.' : 'Note copied to the clipboard.')
+  } catch (error) {
+    showToast(error.message, true)
+  }
+}
+
+async function pasteIntoNote() {
+  try {
+    const clipboardText = await window.lanDrop.readClipboardText()
+    const textarea = elements.noteComposer
+    const start = textarea.selectionStart
+    const end = textarea.selectionEnd
+    const value = textarea.value
+    const updated = `${value.slice(0, start)}${clipboardText}${value.slice(end)}`.slice(0, textarea.maxLength)
+    textarea.value = updated
+    const cursor = Math.min(start + clipboardText.length, updated.length)
+    textarea.focus()
+    textarea.setSelectionRange(cursor, cursor)
+    renderNoteComposer()
+  } catch (error) {
+    showToast(error.message, true)
+  }
+}
+
 function createIncomingCard(incoming) {
+  const isNote = incoming.type === 'note'
   const card = document.createElement('article')
   card.className = 'incoming-card'
   card.dataset.transferId = incoming.transferId
@@ -291,18 +464,22 @@ function createIncomingCard(incoming) {
   icon.textContent = '↓'
   const copy = document.createElement('div')
   const title = document.createElement('strong')
-  title.textContent = 'Incoming file'
+  title.textContent = isNote ? 'Incoming note' : 'Incoming file'
   const sender = document.createElement('span')
-  sender.textContent = `${incoming.senderDeviceName} wants to send a file`
+  sender.textContent = `${incoming.senderDeviceName} wants to send ${isNote ? 'a note' : 'a file'}`
   copy.append(title, sender)
   heading.append(icon, copy)
-  const file = document.createElement('div')
-  file.className = 'incoming-file'
-  const fileName = document.createElement('strong')
-  fileName.textContent = incoming.fileName
-  const size = document.createElement('span')
-  size.textContent = formatBytes(incoming.size)
-  file.append(fileName, size)
+  const content = document.createElement('div')
+  content.className = isNote ? 'incoming-note-message' : 'incoming-file'
+  if (isNote) {
+    content.textContent = incoming.text
+  } else {
+    const fileName = document.createElement('strong')
+    fileName.textContent = incoming.fileName
+    const size = document.createElement('span')
+    size.textContent = formatBytes(incoming.size)
+    content.append(fileName, size)
+  }
   const actions = document.createElement('div')
   actions.className = 'incoming-actions'
   const decline = document.createElement('button')
@@ -313,10 +490,10 @@ function createIncomingCard(incoming) {
   const accept = document.createElement('button')
   accept.type = 'button'
   accept.className = 'button button-primary'
-  accept.textContent = 'Accept file'
+  accept.textContent = isNote ? 'Accept note' : 'Accept file'
   accept.addEventListener('click', () => respondToIncoming(incoming.transferId, true))
   actions.append(decline, accept)
-  card.append(heading, file, actions)
+  card.append(heading, content, actions)
   return card
 }
 
@@ -381,6 +558,20 @@ elements.clearFilesButton.addEventListener('click', () => {
   renderFiles()
 })
 elements.sendButton.addEventListener('click', sendQueuedFiles)
+elements.noteComposer.addEventListener('input', renderNoteComposer)
+elements.sendNoteButton.addEventListener('click', sendComposedNote)
+elements.copyNoteButton.addEventListener('click', copyComposedNote)
+elements.pasteNoteButton.addEventListener('click', pasteIntoNote)
+document.addEventListener('paste', (event) => {
+  const filesFromItems = Array.from(event.clipboardData?.items || [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter(Boolean)
+  const pastedFiles = filesFromItems.length ? filesFromItems : Array.from(event.clipboardData?.files || [])
+  if (!pastedFiles.length) return
+  event.preventDefault()
+  addDroppedFiles(pastedFiles)
+})
 elements.connectButton.addEventListener('click', connectByAddress)
 elements.peerAddress.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') connectByAddress()
@@ -396,14 +587,12 @@ elements.changeFolderButton.addEventListener('click', async () => {
     showToast(error.message, true)
   }
 })
-elements.downloadLatestButton.addEventListener('click', async () => {
+elements.updateButton.addEventListener('click', async () => {
   try {
-    const result = await window.lanDrop.downloadLatest()
-    if (result.ok) {
-      showToast('Opening the latest app download.')
-    } else {
-      showToast(result.message, true)
-    }
+    const result = updateState.status === 'downloaded'
+      ? await window.lanDrop.installUpdate()
+      : await window.lanDrop.checkForUpdates()
+    if (!result.ok) showToast(result.message, true)
   } catch (error) {
     showToast(error.message, true)
   }
@@ -423,6 +612,13 @@ window.lanDrop.onIncoming((incoming) => {
   elements.incomingRequests.prepend(card)
 })
 
+window.lanDrop.onNotes((newNotes) => {
+  notes = Array.isArray(newNotes) ? newNotes : []
+  renderNotes()
+})
+
+window.lanDrop.onUpdateStatus(renderUpdateStatus)
+
 window.lanDrop.onTransfer((update) => {
   transfers.set(update.transferId, { ...transfers.get(update.transferId), ...update })
   if (update.status === 'declined') {
@@ -437,12 +633,17 @@ window.lanDrop.getState().then((initialState) => {
   renderNetwork()
 }).catch((error) => showToast(error.message, true))
 
+window.lanDrop.getNotes().then((savedNotes) => {
+  notes = Array.isArray(savedNotes) ? savedNotes : []
+  renderNotes()
+}).catch((error) => showToast(error.message, true))
+
 window.lanDrop.getAppInfo().then((info) => {
-  elements.appVersionDisplay.textContent = `Version ${info.version}`
-  elements.downloadLatestButton.disabled = !info.latestDownloadAvailable
-  if (!info.latestDownloadAvailable) {
-    elements.downloadLatestButton.title = 'Update downloads will be enabled when the public release is configured.'
-  }
+  appVersion = info.version
+  updatesSupported = Boolean(info.updatesSupported)
+  renderUpdateStatus({ status: updatesSupported ? 'idle' : 'unsupported' })
 }).catch((error) => showToast(error.message, true))
 
 renderFiles()
+renderNoteComposer()
+renderNotes()
