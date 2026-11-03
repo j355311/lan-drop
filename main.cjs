@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } = require('electron')
 const crypto = require('node:crypto')
 const dgram = require('node:dgram')
 const fs = require('node:fs')
@@ -8,15 +8,16 @@ const os = require('node:os')
 const path = require('node:path')
 const { Transform } = require('node:stream')
 const { pipeline } = require('node:stream/promises')
-const packageInfo = require('./package.json')
+const { autoUpdater } = require('electron-updater')
 
 const APP_PROTOCOL = 'lan-drop'
-const UPDATE_ASSET_NAME = 'LAN.Drop.-.Windows.Portable.zip'
 const DEFAULT_TRANSFER_PORT = 48760
 const DISCOVERY_PORT = 48761
 const DISCOVERY_INTERVAL_MS = 3000
 const PEER_TIMEOUT_MS = 12000
 const INCOMING_APPROVAL_TIMEOUT_MS = 60000
+const MAX_NOTE_BYTES = 256 * 1024
+const MAX_NOTE_REQUEST_BYTES = MAX_NOTE_BYTES + 1024
 
 const hasSingleInstance = app.requestSingleInstanceLock()
 
@@ -31,19 +32,169 @@ if (!hasSingleInstance) {
   let transferPort = DEFAULT_TRANSFER_PORT
   let listenerReady = false
   let settings
+  let notes = []
+  let updateState = { status: 'idle' }
+  let updateCheckRunning = false
+  let updateRequested = false
+  let updateDownloaded = false
+  let updatePromptOpen = false
   const peers = new Map()
   const incomingApprovals = new Map()
 
-  function getLatestDownloadUrl() {
-    const repository = String(packageInfo.updateRepository || '').trim()
-    const match = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/.exec(repository)
-    if (!match) return null
-    const [, owner, repo] = match
-    return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/releases/latest/download/${encodeURIComponent(UPDATE_ASSET_NAME)}`
-  }
-
   function getSettingsPath() {
     return path.join(app.getPath('userData'), 'settings.json')
+  }
+
+  function getNotesPath() {
+    return path.join(app.getPath('userData'), 'notes.json')
+  }
+
+  function readNotes() {
+    try {
+      const saved = JSON.parse(fs.readFileSync(getNotesPath(), 'utf8'))
+      if (!Array.isArray(saved)) return []
+      return saved.filter((note) => note
+        && typeof note.id === 'string'
+        && typeof note.text === 'string'
+        && (note.direction === 'incoming' || note.direction === 'outgoing'))
+        .map((note) => ({
+          id: note.id,
+          text: note.text,
+          direction: note.direction,
+          peerName: normalizeDeviceName(note.peerName),
+          status: typeof note.status === 'string' ? note.status : 'saved',
+          createdAt: Number.isFinite(note.createdAt) ? note.createdAt : Date.now()
+        }))
+    } catch {
+      return []
+    }
+  }
+
+  function writeNotes() {
+    const notesPath = getNotesPath()
+    fs.mkdirSync(path.dirname(notesPath), { recursive: true })
+    fs.writeFileSync(notesPath, JSON.stringify(notes, null, 2), 'utf8')
+  }
+
+  function publishNotes() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('lan-drop:notes', notes)
+    }
+  }
+
+  function publishUpdateStatus(status) {
+    updateState = status
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('lan-drop:update-status', status)
+    }
+  }
+
+  async function promptToRestartForUpdate(version) {
+    if (!mainWindow || mainWindow.isDestroyed() || updatePromptOpen) return
+    updatePromptOpen = true
+    try {
+      const result = await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'LAN Drop update ready',
+        message: `LAN Drop ${version} is ready to install.`,
+        detail: 'Restart LAN Drop now to install the update? The app will reopen automatically.',
+        buttons: ['Restart now', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true
+      })
+      if (result.response === 0) {
+        autoUpdater.quitAndInstall(true, true)
+      } else {
+        updateRequested = false
+      }
+    } finally {
+      updatePromptOpen = false
+    }
+  }
+
+  function configureAutoUpdater() {
+    autoUpdater.autoDownload = true
+    autoUpdater.autoInstallOnAppQuit = false
+    autoUpdater.on('checking-for-update', () => publishUpdateStatus({ status: 'checking' }))
+    autoUpdater.on('update-available', (info) => {
+      publishUpdateStatus({ status: 'downloading', version: info.version, percent: 0 })
+    })
+    autoUpdater.on('download-progress', (progress) => {
+      publishUpdateStatus({ status: 'downloading', percent: Math.round(progress.percent || 0) })
+    })
+    autoUpdater.on('update-not-available', (info) => {
+      updateRequested = false
+      publishUpdateStatus({ status: 'current', version: info.version || app.getVersion() })
+    })
+    autoUpdater.on('update-downloaded', (info) => {
+      updateDownloaded = true
+      publishUpdateStatus({ status: 'downloaded', version: info.version })
+      if (updateRequested) {
+        promptToRestartForUpdate(info.version).catch((error) => {
+          updateRequested = false
+          publishUpdateStatus({ status: 'error', message: error.message || 'Could not show the restart prompt.' })
+        })
+      }
+    })
+    autoUpdater.on('error', (error) => {
+      updateRequested = false
+      publishUpdateStatus({ status: 'error', message: error.message || 'The update could not be downloaded.' })
+    })
+  }
+
+  async function checkForUpdates() {
+    if (!app.isPackaged) {
+      return { ok: false, message: 'Automatic updates work in the installed app.' }
+    }
+    if (updateDownloaded) {
+      return { ok: true, downloaded: true, version: updateState.version }
+    }
+    if (updateCheckRunning) return { ok: true, inProgress: true }
+
+    updateCheckRunning = true
+    updateRequested = true
+    publishUpdateStatus({ status: 'checking' })
+    try {
+      const result = await autoUpdater.checkForUpdates()
+      if (!result?.isUpdateAvailable) {
+        updateRequested = false
+        publishUpdateStatus({ status: 'current', version: app.getVersion() })
+        return { ok: true, available: false }
+      }
+      return { ok: true, available: true, version: result.updateInfo.version }
+    } catch (error) {
+      updateRequested = false
+      const message = error.message || 'Could not check for updates.'
+      publishUpdateStatus({ status: 'error', message })
+      return { ok: false, message }
+    } finally {
+      updateCheckRunning = false
+    }
+  }
+
+  function storeNote(note) {
+    notes.unshift(note)
+    writeNotes()
+    publishNotes()
+    return note
+  }
+
+  function updateNote(noteId, updates) {
+    const note = notes.find((entry) => entry.id === noteId)
+    if (!note) return
+    Object.assign(note, updates)
+    writeNotes()
+    publishNotes()
+  }
+
+  function normalizeNoteText(value) {
+    const text = String(value || '').trim()
+    if (!text) throw new Error('Write a note before sending it.')
+    if (Buffer.byteLength(text, 'utf8') > MAX_NOTE_BYTES) {
+      throw new Error('Notes must be 256 KB or smaller.')
+    }
+    return text
   }
 
   function readSettings() {
@@ -259,6 +410,87 @@ if (!hasSingleInstance) {
     })
   }
 
+  function readRequestBody(request, maxBytes) {
+    return new Promise((resolve, reject) => {
+      let received = 0
+      const chunks = []
+      let finished = false
+
+      request.on('data', (chunk) => {
+        if (finished) return
+        received += chunk.length
+        if (received > maxBytes) {
+          finished = true
+          request.destroy()
+          reject(new Error('The incoming note is too large.'))
+          return
+        }
+        chunks.push(chunk)
+      })
+      request.on('end', () => {
+        if (finished) return
+        finished = true
+        resolve(Buffer.concat(chunks))
+      })
+      request.on('error', (error) => {
+        if (finished) return
+        finished = true
+        reject(error)
+      })
+    })
+  }
+
+  async function handleIncomingNote(request, response) {
+    const senderId = request.headers['x-lan-drop-device-id']
+    const senderName = normalizeDeviceName(decodeHeaderValue(request.headers['x-lan-drop-device-name']))
+    const contentLength = Number(request.headers['content-length'])
+
+    if (request.headers.origin || typeof senderId !== 'string' || !senderId || !Number.isSafeInteger(contentLength)
+      || contentLength < 1 || contentLength > MAX_NOTE_REQUEST_BYTES) {
+      request.resume()
+      writeJson(response, 400, { error: 'Invalid note request.' })
+      return
+    }
+
+    let noteText
+    try {
+      const payload = JSON.parse((await readRequestBody(request, MAX_NOTE_REQUEST_BYTES)).toString('utf8'))
+      noteText = normalizeNoteText(payload.text)
+    } catch (error) {
+      if (!response.destroyed) writeJson(response, 400, { error: error.message || 'Invalid note content.' })
+      return
+    }
+
+    const transferId = crypto.randomUUID()
+    const accepted = await requestIncomingApproval({
+      transferId,
+      type: 'note',
+      senderDeviceId: senderId,
+      senderDeviceName: senderName,
+      text: noteText,
+      size: Buffer.byteLength(noteText, 'utf8')
+    })
+
+    if (!accepted) {
+      writeJson(response, 403, { error: 'The note was declined or timed out.' })
+      return
+    }
+
+    try {
+      const note = storeNote({
+        id: crypto.randomUUID(),
+        text: noteText,
+        direction: 'incoming',
+        peerName: senderName,
+        status: 'received',
+        createdAt: Date.now()
+      })
+      writeJson(response, 200, { received: true, noteId: note.id })
+    } catch {
+      writeJson(response, 500, { error: 'The note could not be saved on this computer.' })
+    }
+  }
+
   function sanitizeFileName(value) {
     let fileName = path.basename(String(value || 'file'))
       .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
@@ -405,6 +637,68 @@ if (!hasSingleInstance) {
     }
   }
 
+  function sendNote(peer, noteText) {
+    const noteId = crypto.randomUUID()
+    const body = Buffer.from(JSON.stringify({ text: noteText }), 'utf8')
+    storeNote({
+      id: noteId,
+      text: noteText,
+      direction: 'outgoing',
+      peerName: peer.deviceName,
+      status: 'waiting',
+      createdAt: Date.now()
+    })
+
+    return new Promise((resolve, reject) => {
+      let finished = false
+      const finishWithError = (error, status) => {
+        if (finished) return
+        finished = true
+        updateNote(noteId, { status })
+        reject(error)
+      }
+
+      const outgoingRequest = http.request({
+        hostname: peer.address,
+        port: peer.port,
+        path: '/receive-note',
+        method: 'POST',
+        timeout: INCOMING_APPROVAL_TIMEOUT_MS + 10000,
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'content-length': body.length,
+          'x-lan-drop-device-id': settings.deviceId,
+          'x-lan-drop-device-name': encodeURIComponent(settings.deviceName)
+        }
+      }, (response) => {
+        const chunks = []
+        response.on('data', (chunk) => chunks.push(chunk))
+        response.on('end', () => {
+          let payload = {}
+          try {
+            payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+          } catch {
+            payload = {}
+          }
+
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            finished = true
+            updateNote(noteId, { status: 'sent' })
+            resolve({ noteId })
+            return
+          }
+
+          const status = response.statusCode === 403 ? 'declined' : 'failed'
+          finishWithError(new Error(payload.error || `The other computer returned ${response.statusCode}.`), status)
+        })
+      })
+
+      outgoingRequest.on('error', (error) => finishWithError(error, 'failed'))
+      outgoingRequest.on('timeout', () => outgoingRequest.destroy(new Error('The other computer did not respond.')))
+      outgoingRequest.end(body)
+    })
+  }
+
   function createTransferServer() {
     return http.createServer(async (request, response) => {
       const requestUrl = new URL(request.url || '/', 'http://lan-drop.local')
@@ -421,6 +715,11 @@ if (!hasSingleInstance) {
 
       if (request.method === 'POST' && requestUrl.pathname === '/receive') {
         await handleIncomingTransfer(request, response)
+        return
+      }
+
+      if (request.method === 'POST' && requestUrl.pathname === '/receive-note') {
+        await handleIncomingNote(request, response)
         return
       }
 
@@ -615,12 +914,28 @@ if (!hasSingleInstance) {
   }
 
   function createWindow() {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { type: 'separator' },
+          { role: 'selectAll' }
+        ]
+      }
+    ]))
+
     mainWindow = new BrowserWindow({
       width: 1040,
       height: 760,
       minWidth: 780,
       minHeight: 660,
-      backgroundColor: '#f3f6fa',
+      backgroundColor: '#0b111c',
       title: 'LAN Drop',
       autoHideMenuBar: true,
       webPreferences: {
@@ -632,28 +947,33 @@ if (!hasSingleInstance) {
     })
 
     mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'))
-    mainWindow.webContents.on('did-finish-load', publishState)
+    mainWindow.webContents.on('did-finish-load', () => {
+      publishState()
+      publishNotes()
+      publishUpdateStatus(updateState)
+    })
     mainWindow.on('closed', () => {
       mainWindow = null
     })
   }
 
   ipcMain.handle('lan-drop:get-state', () => getAppState())
+  ipcMain.handle('lan-drop:get-notes', () => notes)
   ipcMain.handle('lan-drop:get-app-info', () => ({
     version: app.getVersion(),
-    latestDownloadAvailable: Boolean(getLatestDownloadUrl())
+    updatesSupported: app.isPackaged
   }))
-  ipcMain.handle('lan-drop:download-latest', async () => {
-    const downloadUrl = getLatestDownloadUrl()
-    if (!downloadUrl) {
-      return { ok: false, message: 'App updates are not available yet.' }
-    }
-    try {
-      await shell.openExternal(downloadUrl)
-      return { ok: true }
-    } catch {
-      return { ok: false, message: 'Could not open the latest app download.' }
-    }
+  ipcMain.handle('lan-drop:check-for-updates', checkForUpdates)
+  ipcMain.handle('lan-drop:install-update', () => {
+    if (!updateDownloaded) return { ok: false, message: 'There is no downloaded update to install.' }
+    autoUpdater.quitAndInstall(true, true)
+    return { ok: true }
+  })
+
+  ipcMain.handle('lan-drop:clipboard-read-text', () => clipboard.readText())
+  ipcMain.handle('lan-drop:clipboard-write-text', (_event, value) => {
+    clipboard.writeText(String(value ?? ''))
+    return true
   })
 
   ipcMain.handle('lan-drop:select-files', async () => {
@@ -697,6 +1017,14 @@ if (!hasSingleInstance) {
       }
     }
     return { attempted: paths.length, succeeded: successfulPaths.length, successfulPaths }
+  })
+
+  ipcMain.handle('lan-drop:send-note', async (_event, { deviceId, text }) => {
+    const peer = peers.get(deviceId)
+    if (!peer || (!peer.manual && Date.now() - peer.lastSeen >= PEER_TIMEOUT_MS)) {
+      throw new Error('That computer is no longer available. Check that both apps are open.')
+    }
+    return sendNote(peer, normalizeNoteText(text))
   })
 
   ipcMain.handle('lan-drop:respond-to-incoming', (_event, { transferId, accepted }) => {
@@ -751,6 +1079,8 @@ if (!hasSingleInstance) {
 
   app.whenReady().then(async () => {
     settings = readSettings()
+    notes = readNotes()
+    configureAutoUpdater()
     writeSettings()
     await fs.promises.mkdir(settings.receiveDirectory, { recursive: true })
     await startTransferServer()

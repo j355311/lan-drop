@@ -1,13 +1,12 @@
 {
   "name": "lan-file-drop",
   "productName": "LAN Drop",
-  "version": "1.0.2",
-  "description": "Private peer-to-peer file transfers over your local network.",
-  "updateRepository": "j355311/lan-drop",
+  "version": "1.1.0",
+  "description": "Private peer-to-peer file and note transfers over your local network.",
   "main": "main.cjs",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable"
+    "dist": "electron-builder --win nsis --publish never"
   },
   "devDependencies": {
     "electron": "44.5.1",
@@ -29,11 +28,29 @@
     "win": {
       "target": [
         {
-          "target": "portable",
-          "arch": ["x64"]
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
         }
       ],
-      "artifactName": "LAN Drop.${ext}"
+      "artifactName": "LAN-Drop-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "j355311",
+      "repo": "lan-drop"
     }
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
   }
 }
