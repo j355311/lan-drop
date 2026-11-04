@@ -21,6 +21,8 @@ const MAX_NOTE_REQUEST_BYTES = MAX_NOTE_BYTES + 1024
 
 const hasSingleInstance = app.requestSingleInstanceLock()
 
+if (process.platform === 'win32') app.setAppUserModelId('local.landrop')
+
 if (!hasSingleInstance) {
   app.quit()
 } else {
@@ -40,6 +42,8 @@ if (!hasSingleInstance) {
   let updatePromptOpen = false
   const peers = new Map()
   const incomingApprovals = new Map()
+  const receivedFiles = new Map()
+  const clipboardImagePaths = new Set()
 
   function getSettingsPath() {
     return path.join(app.getPath('userData'), 'settings.json')
@@ -198,26 +202,74 @@ if (!hasSingleInstance) {
   }
 
   function readSettings() {
+    const defaultReceiveDirectory = path.join(app.getPath('downloads'), 'LAN Drop')
     const defaults = {
       deviceId: crypto.randomUUID(),
       deviceName: os.hostname().slice(0, 32) || 'My computer',
-      receiveDirectory: path.join(app.getPath('downloads'), 'LAN Drop')
+      receiveDirectory: defaultReceiveDirectory,
+      receiveLocations: [{ id: crypto.randomUUID(), path: defaultReceiveDirectory }],
+      receivedHistory: []
     }
 
     try {
       const saved = JSON.parse(fs.readFileSync(getSettingsPath(), 'utf8'))
+      const receiveDirectory = typeof saved.receiveDirectory === 'string' && path.isAbsolute(saved.receiveDirectory)
+        ? path.resolve(saved.receiveDirectory)
+        : defaultReceiveDirectory
+      const receiveLocations = []
+      const seenPaths = new Set()
+      const seenIds = new Set()
+      for (const location of Array.isArray(saved.receiveLocations) ? saved.receiveLocations : []) {
+        if (!location || typeof location.path !== 'string' || !path.isAbsolute(location.path)) continue
+        const locationPath = path.resolve(location.path)
+        const identity = normalizePathForComparison(locationPath)
+        if (seenPaths.has(identity)) continue
+        const id = typeof location.id === 'string' && location.id && !seenIds.has(location.id)
+          ? location.id
+          : crypto.randomUUID()
+        receiveLocations.push({ id, path: locationPath })
+        seenPaths.add(identity)
+        seenIds.add(id)
+      }
+      if (!seenPaths.has(normalizePathForComparison(receiveDirectory))) {
+        receiveLocations.unshift({ id: crypto.randomUUID(), path: receiveDirectory })
+      }
+      const receivedHistory = []
+      const receivedTransferIds = new Set()
+      for (const file of Array.isArray(saved.receivedHistory) ? saved.receivedHistory : []) {
+        if (!file || typeof file.transferId !== 'string' || !file.transferId
+          || typeof file.savedPath !== 'string' || !path.isAbsolute(file.savedPath)
+          || receivedTransferIds.has(file.transferId)) continue
+        const savedPath = path.resolve(file.savedPath)
+        receivedHistory.push({
+          transferId: file.transferId,
+          fileName: path.basename(savedPath),
+          savedPath,
+          peerName: normalizeDeviceName(file.peerName),
+          size: Number.isFinite(file.size) && file.size >= 0 ? file.size : 0,
+          receivedAt: Number.isFinite(file.receivedAt) && file.receivedAt > 0 ? file.receivedAt : Date.now()
+        })
+        receivedTransferIds.add(file.transferId)
+        if (receivedHistory.length === 30) break
+      }
+
       return {
         ...defaults,
         ...saved,
         deviceId: typeof saved.deviceId === 'string' ? saved.deviceId : defaults.deviceId,
         deviceName: normalizeDeviceName(saved.deviceName || defaults.deviceName),
-        receiveDirectory: typeof saved.receiveDirectory === 'string' && saved.receiveDirectory
-          ? saved.receiveDirectory
-          : defaults.receiveDirectory
+        receiveDirectory,
+        receiveLocations,
+        receivedHistory
       }
     } catch {
       return defaults
     }
+  }
+
+  function normalizePathForComparison(value) {
+    const resolved = path.resolve(value)
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved
   }
 
   function writeSettings() {
@@ -278,6 +330,11 @@ if (!hasSingleInstance) {
       deviceId: settings.deviceId,
       deviceName: settings.deviceName,
       receiveDirectory: settings.receiveDirectory,
+      receiveLocations: settings.receiveLocations.map((location) => ({
+        ...location,
+        enabled: normalizePathForComparison(location.path) === normalizePathForComparison(settings.receiveDirectory)
+      })),
+      receivedHistory: settings.receivedHistory.map((file) => ({ ...file })),
       localAddresses: getLocalAddresses(),
       transferPort,
       listenerReady,
@@ -292,9 +349,33 @@ if (!hasSingleInstance) {
   }
 
   function publishTransfer(update) {
+    let historyChanged = false
+    if (update.direction === 'incoming' && update.status === 'completed' && update.savedPath) {
+      const file = {
+        transferId: String(update.transferId),
+        fileName: path.basename(update.savedPath),
+        savedPath: path.resolve(update.savedPath),
+        peerName: normalizeDeviceName(update.peerName),
+        size: Number.isFinite(update.size) && update.size >= 0 ? update.size : 0,
+        receivedAt: Date.now()
+      }
+      settings.receivedHistory = [file, ...settings.receivedHistory.filter((entry) => entry.transferId !== file.transferId)].slice(0, 30)
+      receivedFiles.set(file.transferId, file.savedPath)
+      const retainedTransferIds = new Set(settings.receivedHistory.map((entry) => entry.transferId))
+      for (const transferId of receivedFiles.keys()) {
+        if (!retainedTransferIds.has(transferId)) receivedFiles.delete(transferId)
+      }
+      try {
+        writeSettings()
+      } catch (error) {
+        console.error('Could not save received-file history:', error)
+      }
+      historyChanged = true
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('lan-drop:transfer', update)
     }
+    if (historyChanged) publishState()
   }
 
   function sendDiscoveryBeacon() {
@@ -937,6 +1018,7 @@ if (!hasSingleInstance) {
       minHeight: 660,
       backgroundColor: '#0b111c',
       title: 'LAN Drop',
+      icon: path.join(__dirname, 'assets', 'lan-drop-icon.ico'),
       autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
@@ -973,6 +1055,23 @@ if (!hasSingleInstance) {
   ipcMain.handle('lan-drop:clipboard-read-text', () => clipboard.readText())
   ipcMain.handle('lan-drop:clipboard-write-text', (_event, value) => {
     clipboard.writeText(String(value ?? ''))
+    return true
+  })
+  ipcMain.handle('lan-drop:save-clipboard-image', async () => {
+    const image = clipboard.readImage()
+    if (image.isEmpty()) return null
+    const imageBytes = image.toPNG()
+    if (!imageBytes.length) return null
+    const filePath = path.join(app.getPath('temp'), `LAN-Drop-clipboard-${crypto.randomUUID()}.png`)
+    await fs.promises.writeFile(filePath, imageBytes, { flag: 'wx' })
+    clipboardImagePaths.add(filePath)
+    return { path: filePath, name: 'Pasted image.png', size: imageBytes.length, temporary: true }
+  })
+  ipcMain.handle('lan-drop:cleanup-clipboard-image', async (_event, filePath) => {
+    if (typeof filePath !== 'string' || !clipboardImagePaths.delete(filePath)) return false
+    await fs.promises.unlink(filePath).catch((error) => {
+      if (error.code !== 'ENOENT') throw error
+    })
     return true
   })
 
@@ -1040,16 +1139,92 @@ if (!hasSingleInstance) {
       defaultPath: settings.receiveDirectory
     })
     if (result.canceled || !result.filePaths[0]) return null
-    settings.receiveDirectory = result.filePaths[0]
+    const chosenPath = path.resolve(result.filePaths[0])
+    let location = settings.receiveLocations.find((entry) => (
+      normalizePathForComparison(entry.path) === normalizePathForComparison(chosenPath)
+    ))
+    if (!location) {
+      location = { id: crypto.randomUUID(), path: chosenPath }
+      settings.receiveLocations.push(location)
+    }
+    settings.receiveDirectory = location.path
     await fs.promises.mkdir(settings.receiveDirectory, { recursive: true })
     writeSettings()
     publishState()
     return settings.receiveDirectory
   })
 
+  ipcMain.handle('lan-drop:set-receive-location', async (_event, locationId) => {
+    const location = settings.receiveLocations.find((entry) => entry.id === String(locationId || ''))
+    if (!location) throw new Error('That saved location is no longer available.')
+    settings.receiveDirectory = location.path
+    await fs.promises.mkdir(settings.receiveDirectory, { recursive: true })
+    writeSettings()
+    publishState()
+    return getAppState()
+  })
+
+  async function removeReceiveLocation(locationId) {
+    const index = settings.receiveLocations.findIndex((entry) => entry.id === locationId)
+    if (index < 0) return false
+    if (settings.receiveLocations.length <= 1) return false
+
+    const [removed] = settings.receiveLocations.splice(index, 1)
+    if (normalizePathForComparison(removed.path) === normalizePathForComparison(settings.receiveDirectory)) {
+      settings.receiveDirectory = settings.receiveLocations[0].path
+      await fs.promises.mkdir(settings.receiveDirectory, { recursive: true })
+    }
+    writeSettings()
+    publishState()
+    return true
+  }
+
+  ipcMain.handle('lan-drop:show-receive-location-menu', (event, locationId) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
+    const location = settings.receiveLocations.find((entry) => entry.id === String(locationId || ''))
+    if (!location) return false
+    const canRemove = settings.receiveLocations.length > 1
+    const menu = Menu.buildFromTemplate([
+      {
+        label: canRemove ? 'Remove saved location' : 'At least one save location is required',
+        enabled: canRemove,
+        click: () => {
+          removeReceiveLocation(location.id).catch((error) => {
+            dialog.showErrorBox('Could not remove saved location', error.message)
+          })
+        }
+      }
+    ])
+    menu.popup({ window: mainWindow })
+    return true
+  })
+
   ipcMain.handle('lan-drop:open-receive-folder', async () => {
     await fs.promises.mkdir(settings.receiveDirectory, { recursive: true })
     return shell.openPath(settings.receiveDirectory)
+  })
+
+  ipcMain.handle('lan-drop:show-received-file-menu', async (event, transferId) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false
+    const filePath = receivedFiles.get(String(transferId || ''))
+    if (!filePath) return false
+    try {
+      await fs.promises.access(filePath, fs.constants.F_OK)
+    } catch {
+      return false
+    }
+    const menu = Menu.buildFromTemplate([
+      {
+        label: 'Open downloaded file',
+        click: async () => {
+          const error = await shell.openPath(filePath)
+          if (error) dialog.showErrorBox('Could not open file', error)
+        }
+      },
+      { label: 'Open download location', click: () => shell.showItemInFolder(filePath) }
+    ])
+    menu.popup({ window: mainWindow })
+    return true
   })
 
   ipcMain.handle('lan-drop:set-device-name', (_event, value) => {
@@ -1079,6 +1254,7 @@ if (!hasSingleInstance) {
 
   app.whenReady().then(async () => {
     settings = readSettings()
+    for (const file of settings.receivedHistory) receivedFiles.set(file.transferId, file.savedPath)
     notes = readNotes()
     configureAutoUpdater()
     writeSettings()
@@ -1099,6 +1275,12 @@ if (!hasSingleInstance) {
     if (transferServer) transferServer.close()
     for (const pending of incomingApprovals.values()) pending.resolve(false)
     incomingApprovals.clear()
+    for (const filePath of clipboardImagePaths) {
+      try {
+        fs.rmSync(filePath, { force: true })
+      } catch {}
+    }
+    clipboardImagePaths.clear()
   })
 
   app.on('window-all-closed', () => {

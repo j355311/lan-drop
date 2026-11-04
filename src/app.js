@@ -3,7 +3,10 @@ const elements = {
   networkLabel: document.getElementById('networkLabel'),
   deviceNameDisplay: document.getElementById('deviceNameDisplay'),
   localAddressDisplay: document.getElementById('localAddressDisplay'),
-  receiveDirectoryDisplay: document.getElementById('receiveDirectoryDisplay'),
+  openSettingsButton: document.getElementById('openSettingsButton'),
+  settingsDialog: document.getElementById('settingsDialog'),
+  saveLocationList: document.getElementById('saveLocationList'),
+  addSaveLocationButton: document.getElementById('addSaveLocationButton'),
   dropZone: document.getElementById('dropZone'),
   chooseFilesButton: document.getElementById('chooseFilesButton'),
   fileQueue: document.getElementById('fileQueue'),
@@ -24,11 +27,12 @@ const elements = {
   sendNoteButton: document.getElementById('sendNoteButton'),
   copyNoteButton: document.getElementById('copyNoteButton'),
   pasteNoteButton: document.getElementById('pasteNoteButton'),
+  receivedFilesList: document.getElementById('receivedFilesList'),
+  receivedFilesToggle: document.getElementById('receivedFilesToggle'),
   transferList: document.getElementById('transferList'),
   emptyActivity: document.getElementById('emptyActivity'),
   incomingRequests: document.getElementById('incomingRequests'),
   openFolderButton: document.getElementById('openFolderButton'),
-  changeFolderButton: document.getElementById('changeFolderButton'),
   appVersionDisplay: document.getElementById('appVersionDisplay'),
   updateButton: document.getElementById('updateButton'),
   toast: document.getElementById('toast')
@@ -43,6 +47,7 @@ let selectedPeerId = null
 let sending = false
 let sendingNote = false
 let appVersion = ''
+let receivedFilesExpanded = false
 let updatesSupported = false
 let updateState = { status: 'idle' }
 let toastTimer = null
@@ -83,11 +88,74 @@ function renderNetwork() {
   const addresses = (appState.localAddresses || []).map((address) => `${address}:${appState.transferPort}`).join('  ·  ')
   elements.localAddressDisplay.textContent = addresses || 'No private IPv4 address found'
   elements.localAddressDisplay.title = addresses
-  elements.receiveDirectoryDisplay.textContent = appState.receiveDirectory
-  elements.receiveDirectoryDisplay.title = appState.receiveDirectory
+  renderSaveLocations()
   renderPeers()
+  renderReceivedFiles()
   renderSendSummary()
   renderNoteComposer()
+}
+
+function renderSaveLocations() {
+  elements.saveLocationList.replaceChildren()
+  const locations = appState?.receiveLocations || []
+  if (!locations.length) {
+    const empty = document.createElement('div')
+    empty.className = 'empty-activity'
+    empty.textContent = 'Add a folder to choose where incoming files are saved.'
+    elements.saveLocationList.append(empty)
+    return
+  }
+
+  for (const location of locations) {
+    const row = document.createElement('article')
+    row.className = 'save-location-row'
+    row.title = 'Right-click to remove this saved location'
+    row.addEventListener('contextmenu', async (event) => {
+      event.preventDefault()
+      try {
+        const opened = await window.lanDrop.showReceiveLocationMenu(location.id)
+        if (!opened) showToast('This saved location is no longer available.', true)
+      } catch (error) {
+        showToast(error.message, true)
+      }
+    })
+
+    const details = document.createElement('div')
+    details.className = 'save-location-copy'
+    const folderName = location.path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || location.path
+    const name = document.createElement('strong')
+    name.textContent = folderName
+    const folderPath = document.createElement('span')
+    folderPath.textContent = location.path
+    details.append(name, folderPath)
+
+    const toggle = document.createElement('button')
+    toggle.type = 'button'
+    toggle.className = 'save-location-toggle'
+    toggle.setAttribute('role', 'switch')
+    toggle.setAttribute('aria-checked', String(Boolean(location.enabled)))
+    toggle.setAttribute('aria-label', `Use ${location.path} for incoming files`)
+    const track = document.createElement('span')
+    track.className = 'save-location-switch-track'
+    const knob = document.createElement('span')
+    knob.className = 'save-location-switch-knob'
+    track.append(knob)
+    const state = document.createElement('span')
+    state.className = 'save-location-toggle-state'
+    state.textContent = location.enabled ? 'On' : 'Off'
+    toggle.append(track, state)
+    toggle.addEventListener('click', async () => {
+      if (location.enabled) return
+      try {
+        await window.lanDrop.setReceiveLocation(location.id)
+      } catch (error) {
+        showToast(error.message, true)
+      }
+    })
+
+    row.append(details, toggle)
+    elements.saveLocationList.append(row)
+  }
 }
 
 function createPeerIcon() {
@@ -160,7 +228,8 @@ function renderFiles() {
     remove.className = 'remove-file-button'
     remove.setAttribute('aria-label', `Remove ${file.name}`)
     remove.textContent = '×'
-    remove.addEventListener('click', () => {
+    remove.addEventListener('click', async () => {
+      if (file.temporary) await window.lanDrop.cleanupClipboardImage(file.path).catch(() => {})
       files.delete(file.path)
       renderFiles()
       renderSendSummary()
@@ -311,6 +380,59 @@ function transferStatusLabel(update) {
   return update.status || 'Transfer'
 }
 
+function attachReceivedFileContextMenu(row, transferId) {
+  row.classList.add('transfer-row-openable')
+  row.title = 'Right-click to open this file or its location'
+  row.addEventListener('contextmenu', async (event) => {
+    event.preventDefault()
+    try {
+      const opened = await window.lanDrop.showReceivedFileMenu(transferId)
+      if (!opened) showToast('This downloaded file is no longer available.', true)
+    } catch (error) {
+      showToast(error.message, true)
+    }
+  })
+}
+
+function renderReceivedFiles() {
+  const history = (appState?.receivedHistory || []).slice(0, 30)
+  const visibleFiles = receivedFilesExpanded ? history : history.slice(0, 5)
+  elements.receivedFilesToggle.hidden = history.length <= 5
+  elements.receivedFilesToggle.textContent = receivedFilesExpanded ? 'Show fewer' : `Show all ${history.length}`
+  elements.receivedFilesToggle.setAttribute('aria-expanded', String(receivedFilesExpanded))
+  elements.receivedFilesList.replaceChildren()
+  if (!history.length) {
+    const empty = document.createElement('div')
+    empty.className = 'empty-activity'
+    empty.textContent = 'No files received yet.'
+    elements.receivedFilesList.append(empty)
+    return
+  }
+
+  for (const file of visibleFiles) {
+    const row = document.createElement('div')
+    row.className = 'transfer-row received-file-row'
+    attachReceivedFileContextMenu(row, file.transferId)
+    const icon = document.createElement('span')
+    icon.className = 'transfer-icon transfer-icon-completed'
+    icon.textContent = '✓'
+    const details = document.createElement('span')
+    details.className = 'transfer-details'
+    const name = document.createElement('strong')
+    name.textContent = file.fileName || 'File'
+    name.title = file.fileName || ''
+    const meta = document.createElement('span')
+    const receivedAt = Number.isFinite(file.receivedAt) ? new Date(file.receivedAt).toLocaleString() : ''
+    meta.textContent = `From ${file.peerName || 'computer'} · ${formatBytes(file.size)}${receivedAt ? ` · ${receivedAt}` : ''}`
+    details.append(name, meta)
+    const status = document.createElement('span')
+    status.className = 'transfer-status transfer-status-completed'
+    status.textContent = 'Received'
+    row.append(icon, details, status)
+    elements.receivedFilesList.append(row)
+  }
+}
+
 function renderTransfers() {
   const updates = Array.from(transfers.values()).slice(-8).reverse()
   elements.transferList.replaceChildren()
@@ -325,6 +447,9 @@ function renderTransfers() {
   for (const update of updates) {
     const row = document.createElement('div')
     row.className = 'transfer-row'
+    if (update.direction === 'incoming' && update.status === 'completed' && update.transferId) {
+      attachReceivedFileContextMenu(row, update.transferId)
+    }
     const icon = document.createElement('span')
     icon.className = `transfer-icon transfer-icon-${update.status}`
     icon.textContent = update.status === 'completed' ? '✓' : update.status === 'failed' ? '!' : '↕'
@@ -355,11 +480,14 @@ function renderTransfers() {
 }
 
 function addFiles(newFiles) {
+  let added = 0
   for (const file of newFiles) {
     if (!file?.path || !file.name) continue
-    files.set(file.path, { path: file.path, name: file.name, size: Number(file.size) || 0 })
+    if (!files.has(file.path)) added += 1
+    files.set(file.path, { path: file.path, name: file.name, size: Number(file.size) || 0, temporary: Boolean(file.temporary) })
   }
   renderFiles()
+  return added
 }
 
 async function addDroppedFiles(fileList) {
@@ -370,8 +498,9 @@ async function addDroppedFiles(fileList) {
       if (filePath) droppedFiles.push({ path: filePath, name: file.name, size: file.size })
     } catch {}
   }
-  addFiles(droppedFiles)
+  const added = addFiles(droppedFiles)
   if (!droppedFiles.length && fileList.length) showToast('That item could not be added. Try choosing a file.', true)
+  return added
 }
 
 async function selectFiles() {
@@ -393,7 +522,10 @@ async function sendQueuedFiles() {
     else if (result.succeeded > 0) showToast(`${result.succeeded} of ${result.attempted} files sent.`)
     else showToast('No files were sent. Check the transfer status below.', true)
     if (result.successfulPaths?.length) {
-      for (const filePath of result.successfulPaths) files.delete(filePath)
+      for (const filePath of result.successfulPaths) {
+        if (files.get(filePath)?.temporary) await window.lanDrop.cleanupClipboardImage(filePath).catch(() => {})
+        files.delete(filePath)
+      }
       renderFiles()
     }
   } catch (error) {
@@ -553,7 +685,10 @@ elements.dropZone.addEventListener('drop', (event) => {
   elements.dropZone.classList.remove('drop-zone-active')
   addDroppedFiles(event.dataTransfer.files)
 })
-elements.clearFilesButton.addEventListener('click', () => {
+elements.clearFilesButton.addEventListener('click', async () => {
+  for (const file of files.values()) {
+    if (file.temporary) await window.lanDrop.cleanupClipboardImage(file.path).catch(() => {})
+  }
   files.clear()
   renderFiles()
 })
@@ -562,17 +697,61 @@ elements.noteComposer.addEventListener('input', renderNoteComposer)
 elements.sendNoteButton.addEventListener('click', sendComposedNote)
 elements.copyNoteButton.addEventListener('click', copyComposedNote)
 elements.pasteNoteButton.addEventListener('click', pasteIntoNote)
-document.addEventListener('paste', (event) => {
-  const filesFromItems = Array.from(event.clipboardData?.items || [])
+document.addEventListener('paste', async (event) => {
+  const clipboardItems = Array.from(event.clipboardData?.items || [])
+  const imageFiles = clipboardItems
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter(Boolean)
+  const clipboardFiles = Array.from(event.clipboardData?.files || [])
+  const hasImage = imageFiles.length
+    || clipboardItems.some((item) => item.type.startsWith('image/'))
+    || clipboardFiles.some((file) => file.type.startsWith('image/'))
+  if (hasImage) {
+    event.preventDefault()
+    try {
+      const imageFile = await window.lanDrop.saveClipboardImage()
+      if (imageFile) {
+        addFiles([imageFile])
+        showToast('Clipboard image added to the file queue.')
+        return
+      }
+    } catch (error) {
+      showToast(error.message, true)
+      return
+    }
+    const pastedImages = imageFiles.length ? imageFiles : clipboardFiles.filter((file) => file.type.startsWith('image/'))
+    const added = await addDroppedFiles(pastedImages)
+    if (!added) showToast('Could not read the clipboard image. Try copying it again.', true)
+    return
+  }
+  const filesFromItems = clipboardItems
     .filter((item) => item.kind === 'file')
     .map((item) => item.getAsFile())
     .filter(Boolean)
-  const pastedFiles = filesFromItems.length ? filesFromItems : Array.from(event.clipboardData?.files || [])
-  if (!pastedFiles.length) return
+  const pastedFiles = filesFromItems.length ? filesFromItems : clipboardFiles
+  if (pastedFiles.length) {
+    event.preventDefault()
+    addDroppedFiles(pastedFiles)
+    return
+  }
+  if (event.clipboardData?.getData('text/plain')) return
   event.preventDefault()
-  addDroppedFiles(pastedFiles)
+  try {
+    const imageFile = await window.lanDrop.saveClipboardImage()
+    if (imageFile) {
+      addFiles([imageFile])
+      showToast('Clipboard image added to the file queue.')
+    }
+  } catch (error) {
+    showToast(error.message, true)
+  }
 })
 elements.connectButton.addEventListener('click', connectByAddress)
+elements.receivedFilesToggle.addEventListener('click', () => {
+  receivedFilesExpanded = !receivedFilesExpanded
+  renderReceivedFiles()
+})
 elements.peerAddress.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') connectByAddress()
 })
@@ -580,9 +759,17 @@ elements.openFolderButton.addEventListener('click', async () => {
   const error = await window.lanDrop.openReceiveFolder()
   if (error) showToast(error, true)
 })
-elements.changeFolderButton.addEventListener('click', async () => {
+elements.openSettingsButton.addEventListener('click', () => {
+  renderSaveLocations()
+  elements.settingsDialog.showModal()
+})
+elements.settingsDialog.addEventListener('click', (event) => {
+  if (event.target === elements.settingsDialog) elements.settingsDialog.close()
+})
+elements.addSaveLocationButton.addEventListener('click', async () => {
   try {
-    await window.lanDrop.chooseReceiveFolder()
+    const location = await window.lanDrop.chooseReceiveFolder()
+    if (location) showToast('Save location added and selected.')
   } catch (error) {
     showToast(error.message, true)
   }

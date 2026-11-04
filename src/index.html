@@ -12,7 +12,7 @@
     <header class="topbar">
       <div class="brand-lockup">
         <div class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 32 32" fill="none"><path d="M16 4v16m0 0 6-6m-6 6-6-6M6 20v6h20v-6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg viewBox="0 0 32 32" fill="none"><path d="M7 25 25 7m-2 6.5L25 7l-6.5 2M7 7l18 18m-2-6.5L25 25l-6.5-2" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </div>
         <div>
           <div class="brand-name">LAN Drop</div>
@@ -58,7 +58,7 @@
               <svg viewBox="0 0 40 40" fill="none"><path d="M20 7v19m0 0 7-7m-7 7-7-7M9 26v7h22v-7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </div>
             <strong>Drop files here</strong>
-            <span>or choose files · paste copied files with Ctrl+V</span>
+            <span>Any file type · paste copied files or images with Ctrl+V</span>
             <button id="chooseFilesButton" class="button button-secondary" type="button">Choose files</button>
           </div>
           <div id="fileQueue" class="file-queue" aria-live="polite"></div>
@@ -126,6 +126,22 @@
         </div>
       </section>
 
+      <section class="activity-section received-files-section">
+        <div class="activity-heading">
+          <div>
+            <p class="eyebrow">RECEIVED FILES</p>
+            <h2>Latest downloads</h2>
+          </div>
+          <div class="received-files-heading-actions">
+            <span class="muted-small">Right-click a file to open it or its folder.</span>
+            <button id="receivedFilesToggle" class="button button-outline received-files-toggle" type="button" hidden>Show all</button>
+          </div>
+        </div>
+        <div id="receivedFilesList" class="transfer-list" aria-live="polite">
+          <div class="empty-activity">No files received yet.</div>
+        </div>
+      </section>
+
       <section class="activity-section">
         <div class="activity-heading">
           <div>
@@ -141,15 +157,6 @@
     </main>
 
     <footer class="settings-strip">
-      <div class="receive-location">
-        <div class="folder-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M3.5 7.5h7l2 2H20a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 .5-1Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M3.5 11h17" stroke="currentColor" stroke-width="1.7"/></svg>
-        </div>
-        <div class="receive-copy">
-          <span class="card-label">RECEIVED FILES GO TO</span>
-          <span id="receiveDirectoryDisplay" class="receive-directory">Loading folder…</span>
-        </div>
-      </div>
       <div class="app-update">
         <div class="app-update-copy">
           <span class="card-label">APP VERSION AND UPDATES</span>
@@ -159,10 +166,36 @@
       </div>
       <div class="settings-actions">
         <button id="openFolderButton" class="text-button" type="button">Open folder</button>
-        <button id="changeFolderButton" class="text-button" type="button">Change</button>
+        <button id="openSettingsButton" class="text-button" type="button">Settings</button>
       </div>
     </footer>
   </div>
+
+  <dialog id="settingsDialog" class="settings-dialog" aria-labelledby="settingsTitle">
+    <form method="dialog" class="settings-dialog-content">
+      <div class="settings-dialog-heading">
+        <div>
+          <p class="eyebrow">APP PREFERENCES</p>
+          <h2 id="settingsTitle">Settings</h2>
+        </div>
+        <button class="settings-close-button" type="submit" value="close" aria-label="Close settings">×</button>
+      </div>
+      <div class="settings-location-heading">
+        <div>
+          <span class="card-label">SAVE LOCATIONS</span>
+          <p class="muted-small">Choose one folder for incoming files. Right-click a location to remove it.</p>
+        </div>
+        <button id="addSaveLocationButton" class="button button-outline" type="button">Add location</button>
+      </div>
+      <div id="saveLocationList" class="save-location-list" aria-live="polite">
+        <div class="empty-activity">Loading save locations…</div>
+      </div>
+      <div class="settings-dialog-footer">
+        <span class="muted-small">Removing a location only removes it from this list; its folder and files stay untouched.</span>
+        <button class="button button-primary" type="submit" value="close">Done</button>
+      </div>
+    </form>
+  </dialog>
 
   <section id="incomingRequests" class="incoming-stack" aria-live="assertive"></section>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
